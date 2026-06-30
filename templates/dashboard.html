@@ -1263,7 +1263,7 @@ document.getElementById('btnAdjustConfirm').addEventListener('click', async () =
     adjustError.textContent = 'Zadej nenulovou částku.';
     return;
   }
-  const res = await fetch('/api/wallet/adjust', {
+  const res = await fetch('/api/cash_adjustment', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({amount_eur: amount, note: note})
   });

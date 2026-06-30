@@ -195,6 +195,8 @@ a message.
 
 ## Dashboard overview
 
+![Dashboard](docs/dashboard.png)
+
 - **Live price, portfolio value, realized/unrealized P&L**, displayed
   in EUR with a secondary local-currency conversion
 - **Open orders panel** — separate BUY (waiting to fill) and SELL

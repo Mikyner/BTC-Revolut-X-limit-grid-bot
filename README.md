@@ -261,6 +261,18 @@ Issues and pull requests welcome. This started as a personal project
 adapted for public release — if you spot something Revolut-X-API or
 exchange-specific that's brittle, please open an issue.
 
+## Support this project
+
+If this bot is making (or saving) you money and you'd like to say
+thanks:
+
+- **Revolut**: [revolut.me/mikyner](https://revolut.me/mikyner)
+- **Bitcoin**: `bc1q6rv0hc6yy4pausw6ql5mwl75g7ljzdlpc2hawx`
+
+And if you don't have a Revolut account yet, signing up with my
+referral link costs you nothing extra and helps support this project:
+[revolut.com/referral](https://revolut.com/referral/?referral-code=janmica1d!JUL1-26-AR-RPB&geo-redirect)
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Includes a financial risk disclaimer;

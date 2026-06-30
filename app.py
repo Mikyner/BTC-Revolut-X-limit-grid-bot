@@ -151,8 +151,9 @@ def api_state():
             current_price = None
             logger.error(f"Nepodařilo se získat cenu: {e}")
 
-        # Hodnota portfolia
-        total_value = wallet["eur_balance"] + wallet["btc_balance"] * (current_price or 0)
+        # Hodnota portfolia (volné EUR + rezervace v BUY orderech + BTC)
+        locked_eur = sum((o.get("size_eur") or 0) for o in db.get_open_buy_orders())
+        total_value = wallet["eur_balance"] + locked_eur + wallet["btc_balance"] * (current_price or 0)
         adjustments = db.get_total_cash_adjustments()
         starting_value = config.PAPER_STARTING_BALANCE_EUR + adjustments
         pnl_percent = ((total_value - starting_value) / starting_value * 100) if starting_value else 0
@@ -323,6 +324,9 @@ def api_cancel_buys():
             if not config.DRY_RUN:
                 revx.cancel_order(order["venue_order_id"])
             db.mark_order_cancelled(order["venue_order_id"])
+            # Vrať rezervaci zpět do volných EUR
+            w = db.get_wallet()
+            db.update_wallet(w["eur_balance"] + (order.get("size_eur") or 0), w["btc_balance"])
             cancelled += 1
         except Exception as e:
             logger.warning(f"Nepodařilo se zrušit order {order['venue_order_id']}: {e}")

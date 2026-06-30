@@ -38,11 +38,17 @@ def _current_settings():
     }
 
 
+def _locked_in_open_buys():
+    """EUR zarezervované v otevřených (nevyplněných) BUY orderech."""
+    return sum(o.get("size_eur") or 0 for o in db.get_open_buy_orders())
+
+
 def _order_size(settings, current_price):
     if not settings["compounding_enabled"]:
         return settings["order_size_eur"]
     wallet = db.get_wallet()
-    total = wallet["eur_balance"] + wallet["btc_balance"] * current_price
+    # eur_balance = VOLNÉ EUR; rezervace v BUY orderech jsou pořád náš kapitál
+    total = wallet["eur_balance"] + _locked_in_open_buys() + wallet["btc_balance"] * current_price
     size = total * (settings["compounding_percent"] / 100)
     if settings["max_position_eur"] > 0:
         size = min(size, settings["max_position_eur"])
@@ -91,7 +97,9 @@ def _process_filled_order(db_order, order_detail, settings):
     wallet = db.get_wallet()
 
     if db_order["side"] == "buy":
-        new_eur = wallet["eur_balance"] - fill_eur
+        # Rezervace byla odečtena už při umístění orderu → vrať jen případný rozdíl
+        reserved = db_order.get("size_eur") or fill_eur
+        new_eur = wallet["eur_balance"] + (reserved - fill_eur)
         new_btc = wallet["btc_balance"] + fill_btc
         db.update_wallet(new_eur, new_btc)
 
@@ -192,6 +200,7 @@ def ensure_buy_orders_placed(current_price, settings):
         return
 
     wallet = db.get_wallet()
+    btc_balance = wallet["btc_balance"]
     open_buys = db.get_open_buy_orders()
     covered_prices = {round(o["grid_price"], 2) for o in open_buys}
 
@@ -209,41 +218,46 @@ def ensure_buy_orders_placed(current_price, settings):
                 for r in rows:
                     covered_prices.add(round(r["grid_price"], 2))
 
+    # eur_balance = VOLNÉ EUR. Rezervace v otevřených BUY orderech jsou "locked".
     locked_eur = sum(o.get("size_eur") or 0 for o in open_buys)
-    free_eur = wallet["eur_balance"] - locked_eur
+    free_eur = wallet["eur_balance"]
+    total_budget = free_eur + locked_eur          # celkový nasaditelný kapitál
 
-    total_budget = wallet["eur_balance"]
     max_orders = int(total_budget / size_eur)
-    target_levels = {round(l["price"], 2) for l in levels_below[:max_orders]}
+    if max_orders <= 0:
+        return
+
+    # Cílové okno + velký buffer = hystereze. In-window order se NIKDY neruší
+    # kvůli momentálnímu nedostatku hotovosti → konec thrashe.
     buffer = max(5, int(max_orders * 0.2))
     extended_levels = {round(l["price"], 2) for l in levels_below[:max_orders + buffer]}
 
     placed = 0
     cancelled = 0
 
-    # Krok 1: recyklace (od nejnižších pater)
+    # Krok 1: recyklace POUZE orderů daleko mimo okno (skutečně pod cenou)
     for order in sorted(open_buys, key=lambda o: o["grid_price"]):
         op = round(order["grid_price"], 2)
-        is_outside_extended = op not in extended_levels
-        is_in_buffer_but_need_cash = (op not in target_levels) and (free_eur < size_eur)
+        if op in extended_levels:
+            continue  # uvnitř okna → necháváme být (anti-thrash)
 
-        if is_outside_extended or is_in_buffer_but_need_cash:
-            vid = order["venue_order_id"]
-            reclaimed = order.get("size_eur") or 0
-            if config.DRY_RUN:
-                db.mark_order_cancelled(vid)
-            else:
-                try:
-                    revx.cancel_order(vid)
-                except Exception as e:
-                    logger.warning(f"[SW] Nepodařilo se zrušit {vid}: {e}")
-                    continue
-            covered_prices.discard(op)
-            free_eur += reclaimed
-            cancelled += 1
-            logger.info(f"[SW] Recyklace: zrušen BUY @ {op:.2f} (uvolněno {reclaimed:.2f} EUR)")
+        vid = order["venue_order_id"]
+        reclaimed = order.get("size_eur") or 0
+        if config.DRY_RUN:
+            db.mark_order_cancelled(vid)
+        else:
+            try:
+                revx.cancel_order(vid)
+            except Exception as e:
+                logger.warning(f"[SW] Nepodařilo se zrušit {vid}: {e}")
+                continue
+        covered_prices.discard(op)
+        free_eur += reclaimed
+        db.update_wallet(free_eur, btc_balance)   # vrať rezervaci do volných EUR
+        cancelled += 1
+        logger.info(f"[SW] Recyklace: zrušen BUY @ {op:.2f} (mimo okno, uvolněno {reclaimed:.2f} EUR)")
 
-    # Krok 2: umísti nové ordery
+    # Krok 2: umísti nové ordery až po max_orders nejbližších pater pod cenou
     for level in levels_below[:max_orders]:
         price = round(level["price"], 2)
         if price in covered_prices:
@@ -262,6 +276,7 @@ def ensure_buy_orders_placed(current_price, settings):
             )
             covered_prices.add(price)
             free_eur -= size_eur
+            db.update_wallet(free_eur, btc_balance)   # rezervuj
             placed += 1
         else:
             try:
@@ -282,19 +297,19 @@ def ensure_buy_orders_placed(current_price, settings):
                 )
                 covered_prices.add(price)
                 free_eur -= size_eur
+                db.update_wallet(free_eur, btc_balance)   # rezervuj
                 placed += 1
                 logger.info(f"BUY limit order umístěn @ {price:.2f} EUR")
             except Exception as e:
                 logger.error(f"Nepodařilo se umístit BUY order @ {price:.2f}: {e}")
                 if "Insufficient balance" in str(e) or "422" in str(e):
-                    logger.warning("[SW] Nedostatek financí na burze — synchronizuji peněženku")
-                    current_open = db.get_open_buy_orders()
-                    real_locked = sum(o.get("size_eur") or 0 for o in current_open)
-                    db.update_wallet(real_locked, wallet["btc_balance"])
+                    logger.warning("[SW] Burza hlásí nedostatek financí — snižuji odhad volného EUR na 0")
+                    free_eur = 0.0
+                    db.update_wallet(free_eur, btc_balance)
                     break
 
     if placed > 0 or cancelled > 0:
-        logger.info(f"Sliding window: umístěno {placed} BUY orderů, recyklováno {cancelled} nízkých")
+        logger.info(f"Sliding window: umístěno {placed} BUY orderů, recyklováno {cancelled} mimo okno")
 
 
 def check_paper_sells(current_price, last_price):
@@ -359,7 +374,8 @@ def check_paper_sells(current_price, last_price):
 
         db.mark_order_filled(order["venue_order_id"], buy_price, btc_amount, size_eur)
         wallet = db.get_wallet()
-        db.update_wallet(wallet["eur_balance"] - size_eur, wallet["btc_balance"] + btc_amount)
+        # Rezervace byla odečtena už při umístění → teď jen přidej BTC
+        db.update_wallet(wallet["eur_balance"], wallet["btc_balance"] + btc_amount)
 
         grid_levels_count = settings_cache.get("grid_levels", config.GRID_LEVELS)
         grid_range_pct = settings_cache.get("grid_range_percent", config.GRID_RANGE_PERCENT)
@@ -390,6 +406,12 @@ def do_recenter(current_price, settings, triggered_by="manual"):
                 revx.cancel_order(order["venue_order_id"])
             except Exception as e:
                 logger.warning(f"Nepodařilo se zrušit order {order['venue_order_id']}: {e}")
+
+    # Vrať rezervace zrušených BUY orderů zpět do volných EUR
+    reclaimed = sum(o.get("size_eur") or 0 for o in db.get_open_buy_orders())
+    if reclaimed > 0:
+        w = db.get_wallet()
+        db.update_wallet(w["eur_balance"] + reclaimed, w["btc_balance"])
 
     with db.get_conn() as conn:
         conn.execute("""
@@ -457,7 +479,8 @@ def run_cycle():
 
 def _wallet_snapshot():
     w = db.get_wallet()
-    return {"eur_balance": w["eur_balance"], "btc_balance": w["btc_balance"]}
+    # Pro oceňování portfolia počítej VOLNÉ + zarezervované EUR (= celkové EUR)
+    return {"eur_balance": w["eur_balance"] + _locked_in_open_buys(), "btc_balance": w["btc_balance"]}
 
 
 def check_daily_summary():
@@ -473,7 +496,7 @@ def check_daily_summary():
     try:
         wallet = db.get_wallet()
         price = revx.get_current_price()
-        total = wallet["eur_balance"] + wallet["btc_balance"] * price
+        total = wallet["eur_balance"] + _locked_in_open_buys() + wallet["btc_balance"] * price
         adjustments = db.get_total_cash_adjustments()
         start = config.PAPER_STARTING_BALANCE_EUR + adjustments
         pnl_pct = ((total - start) / start * 100) if start else 0

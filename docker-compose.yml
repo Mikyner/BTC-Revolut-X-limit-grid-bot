@@ -1,0 +1,11 @@
+services:
+  btc-limit-bot:
+    build: .
+    container_name: btc-limit-bot
+    restart: unless-stopped
+    ports:
+      - "${FLASK_PORT:-5051}:${FLASK_PORT:-5051}"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env

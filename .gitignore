@@ -1,0 +1,42 @@
+# Citlivé konfigurace a klíče — NIKDY necommitovat
+.env
+data/revolutx_private.pem
+data/*.pem
+data/*.key
+
+# Databáze (obsahuje obchodní historii, zůstatky)
+data/bot.db
+data/bot.db-shm
+data/bot.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logy
+*.log
+logs/
+
+# OS
+Thumbs.db
+.DS_Store

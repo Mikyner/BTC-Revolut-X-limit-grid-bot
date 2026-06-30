@@ -1,0 +1,38 @@
+MIT License
+
+Copyright (c) 2026 [Jan Michálek - Mikyner]
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+DISCLAIMER / FINANČNÍ UPOZORNĚNÍ:
+Tento software je experimentální nástroj pro automatizované obchodování
+s kryptoměnami. Obchodování s kryptoměnami nese vysoké finanční riziko,
+včetně možné ztráty celého vloženého kapitálu. Autor nenese žádnou
+odpovědnost za finanční ztráty vzniklé používáním tohoto softwaru.
+Používáš na vlastní riziko. Vždy nejdříve otestuj v PAPER TRADING (DRY_RUN=true)
+režimu a investuj pouze prostředky, jejichž ztrátu si můžeš dovolit.
+
+This software is an experimental tool for automated cryptocurrency trading.
+Cryptocurrency trading carries significant financial risk, including the
+possible loss of your entire invested capital. The author assumes no
+responsibility for financial losses incurred through the use of this
+software. Use at your own risk. Always test thoroughly in PAPER TRADING
+(DRY_RUN=true) mode first, and only invest funds you can afford to lose.

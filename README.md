@@ -15,6 +15,13 @@ any home server, NAS, or VPS.
 > only risk funds you can afford to lose. See [LICENSE](LICENSE) for
 > the full disclaimer.
 
+> > 🌍 **Language note**: The dashboard UI and bot logs are currently in
+> **Czech**. This README is in English so the project is discoverable
+> and usable internationally, but full i18n support (English UI
+> toggle) is not actively planned — might happen eventually, might
+> not. PRs adding an English (or any other) UI translation are very
+> welcome.
+
 ---
 
 ## Why limit orders instead of market orders?

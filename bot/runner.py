@@ -136,12 +136,17 @@ def _process_filled_order(db_order, order_detail, settings):
         # množství (partial fill + cancel na burze), eur_spent se počítá jen
         # k té vyplněné části — ne k celému původnímu BUY.
         requested_btc = db_order.get("size_btc") or fill_btc
-        buy_fill_eur = buy_order["fill_eur"] if buy_order and buy_order.get("fill_eur") else db_order.get("size_eur", 0)
-        if requested_btc > 0 and buy_fill_eur:
+        buy_fill_eur = buy_order["fill_eur"] if buy_order and buy_order.get("fill_eur") else None
+        if buy_order and requested_btc > 0 and buy_fill_eur:
+            # Normální grid trade: poměrná nákladová základna k napojenému BUY
             eur_spent = buy_fill_eur * (fill_btc / requested_btc)
+        elif db_order.get("size_eur"):
+            # Orphan reconciliation sell (reconcile_idle_btc) — nese si mark-to-market
+            # nákladovou základnu z okamžiku nálezu, ne fiktivní čistý zisk
+            eur_spent = db_order["size_eur"] * (fill_btc / requested_btc) if requested_btc > 0 else db_order["size_eur"]
         else:
-            eur_spent = buy_fill_eur or 0
-        profit = eur_received - eur_spent if eur_spent else None
+            eur_spent = eur_received  # neznámý základ → neutrální (profit 0), nikdy ne fiktivní zisk
+        profit = eur_received - eur_spent
         buy_price = buy_order["fill_price"] if buy_order else db_order["grid_price"]
 
         db.record_completed_trade(
@@ -180,7 +185,7 @@ def _process_filled_order(db_order, order_detail, settings):
                 )
 
 
-def _place_sell_order(buy_db_order, btc_amount, target_price):
+def _place_sell_order(buy_db_order, btc_amount, target_price, cost_basis_eur=None):
     if config.DRY_RUN:
         return
     try:
@@ -198,6 +203,7 @@ def _place_sell_order(buy_db_order, btc_amount, target_price):
             side="sell",
             grid_price=target_price,
             size_btc=btc_amount,
+            size_eur=cost_basis_eur,
             linked_buy_order_id=buy_db_order["id"],
         )
         logger.info(f"SELL limit order umístěn @ {target_price:.2f} EUR | {venue_id}")
@@ -487,7 +493,11 @@ def reconcile_idle_btc(current_price, settings):
         f"[SW] Nalezena nezapsaná BTC: {idle_btc:.8f} BTC volných mimo evidenci "
         f"otevřených SELL orderů — vystavuji nový SELL @ {target_price:.2f} EUR"
     )
-    _place_sell_order({"id": None}, idle_btc, target_price)
+    # Skutečná historická nákladová základna této BTC není spolehlivě dohledatelná
+    # (typicky reziduum ze staré partial-fill anomálie) → ocenění na trh v okamžiku
+    # nálezu, aby se v profitu neobjevil fiktivní "windfall zisk".
+    cost_basis_eur = round(idle_btc * current_price, 4)
+    _place_sell_order({"id": None}, idle_btc, target_price, cost_basis_eur=cost_basis_eur)
 
 
 def run_cycle():

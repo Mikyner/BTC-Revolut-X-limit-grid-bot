@@ -132,7 +132,15 @@ def _process_filled_order(db_order, order_detail, settings):
         new_btc = wallet["btc_balance"] - fill_btc
         db.update_wallet(new_eur, new_btc)
 
-        eur_spent = buy_order["fill_eur"] if buy_order and buy_order.get("fill_eur") else db_order.get("size_eur", 0)
+        # Poměrná nákladová základna: pokud SELL vyplnil jen ČÁST požadovaného
+        # množství (partial fill + cancel na burze), eur_spent se počítá jen
+        # k té vyplněné části — ne k celému původnímu BUY.
+        requested_btc = db_order.get("size_btc") or fill_btc
+        buy_fill_eur = buy_order["fill_eur"] if buy_order and buy_order.get("fill_eur") else db_order.get("size_eur", 0)
+        if requested_btc > 0 and buy_fill_eur:
+            eur_spent = buy_fill_eur * (fill_btc / requested_btc)
+        else:
+            eur_spent = buy_fill_eur or 0
         profit = eur_received - eur_spent if eur_spent else None
         buy_price = buy_order["fill_price"] if buy_order else db_order["grid_price"]
 
@@ -152,6 +160,24 @@ def _process_filled_order(db_order, order_detail, settings):
         )
         telegram.notify_trade("sell", fill_price, fill_btc, profit_eur=profit,
                               dry_run=False, slippage_eur=fill_price - db_order["grid_price"])
+
+        # Nevyplněný zbytek (partial fill + zrušení na burze) znovu vystav jako SELL,
+        # ať se ta BTC neztratí z evidence ani z gridu.
+        remaining_btc = requested_btc - fill_btc
+        if remaining_btc > 1e-8:
+            logger.warning(
+                f"[SW] SELL @ {db_order['grid_price']:.2f} vyplněn jen částečně "
+                f"({fill_btc:.8f}/{requested_btc:.8f} BTC) — zbytek {remaining_btc:.8f} BTC "
+                f"znovu vystavuji na stejné cíli"
+            )
+            linked_id = db_order.get("linked_buy_order_id")
+            if linked_id:
+                _place_sell_order({"id": linked_id}, remaining_btc, db_order["grid_price"])
+            else:
+                logger.warning(
+                    "[SW] Zbytek partial-fill SELL nemá napojený BUY order — "
+                    "nelze bezpečně znovu vystavit, zbytek zůstává jen v BTC zůstatku"
+                )
 
 
 def _place_sell_order(buy_db_order, btc_amount, target_price):
@@ -432,6 +458,38 @@ def do_recenter(current_price, settings, triggered_by="manual"):
     telegram.notify_bot_paused(f"Grid re-centrován @ {current_price:.2f} EUR")
 
 
+def reconcile_idle_btc(current_price, settings):
+    """
+    Bezpečnostní síť: pokud lokální BTC zůstatek přesahuje součet BTC
+    zamčeného v otevřených SELL orderech, znamená to, že někde uvízla
+    "osiřelá" BTC (typicky reziduum po partial-fill SELL orderu, který
+    se na burze zrušil dřív, než stihl doprodat celé množství).
+    Taková BTC se znovu vystaví jako SELL, ať negenerativně neleží mimo grid.
+    """
+    if config.DRY_RUN:
+        return
+    wallet = db.get_wallet()
+    open_sells = db.get_open_sell_orders()
+    locked_btc = sum(o.get("size_btc") or 0 for o in open_sells)
+    idle_btc = wallet["btc_balance"] - locked_btc
+
+    # Dust threshold: ignoruj zaokrouhlovací drobky, ne skutečné reziduum
+    if idle_btc <= 1e-7:
+        return
+
+    grid_levels_count = settings["grid_levels"]
+    grid_range_pct = settings["grid_range_percent"]
+    half_range = current_price * (grid_range_pct / 100) / 2
+    grid_step = (2 * half_range) / (grid_levels_count - 1)
+    target_price = round(current_price + grid_step, 2)
+
+    logger.warning(
+        f"[SW] Nalezena nezapsaná BTC: {idle_btc:.8f} BTC volných mimo evidenci "
+        f"otevřených SELL orderů — vystavuji nový SELL @ {target_price:.2f} EUR"
+    )
+    _place_sell_order({"id": None}, idle_btc, target_price)
+
+
 def run_cycle():
     global settings_cache
     settings = _current_settings()
@@ -452,6 +510,7 @@ def run_cycle():
         logger.info(f"Grid inicializován @ {current_price:.2f} EUR | {len(prices)} úrovní")
 
     sync_filled_orders(settings)
+    reconcile_idle_btc(current_price, settings)
 
     if config.DRY_RUN:
         check_paper_sells(current_price, last_price)
